@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+@layer utilities {
+  /* Subtle off-white pattern for Stone SCL Correio Verde */
+  .bg-stone-pattern {
+    background-color: #F8FAF7;
+    background-image: radial-gradient(rgba(0, 168, 104, 0.09) 1.2px, transparent 1.2px),
+      radial-gradient(rgba(234, 179, 8, 0.08) 1.2px, transparent 1.2px);
+    background-size: 28px 28px;
+    background-position: 0 0, 14px 14px;
+  }
+}
+
+/* Custom scrollbar for clean off-white & emerald UI */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #EEF3EE;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #C4D9CC;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9DBFA9;
+}
+
+/* Print optimizations for message card */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .print-card-container {
+    box-shadow: none !important;
+    border: 2px solid #00a868 !important;
+    color: #071f14 !important;
+    page-break-inside: avoid;
+  }
+}

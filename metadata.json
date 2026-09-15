@@ -1,0 +1,8 @@
+{
+  "name": "Remix Correio Verde - Stone SCL",
+  "description": "Iniciativa de engajamento e reconhecimento interno da Stone SCL: Ninguém joga em alto nível sozinho(a).",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
