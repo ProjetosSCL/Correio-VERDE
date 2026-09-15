@@ -89,7 +89,14 @@ export const PrintableMessageCard: React.FC<PrintableMessageCardProps> = ({
               Mensagem especial para:
             </span>
             <div className="text-lg font-bold text-white flex items-center justify-between flex-wrap gap-2">
-              <span>{message.recipient_name}</span>
+              <div className="flex items-center gap-2">
+                <span>{message.recipient_name}</span>
+                {message.reaction && (
+                  <span className="text-2xl" title="Reação enviada">
+                    {message.reaction}
+                  </span>
+                )}
+              </div>
               <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-emerald-900 text-emerald-200 border border-emerald-700/60 flex items-center gap-1">
                 <MapPin className="w-3 h-3 text-amber-400" />
                 {message.operation}
@@ -113,6 +120,17 @@ export const PrintableMessageCard: React.FC<PrintableMessageCardProps> = ({
             <blockquote className="text-base sm:text-lg text-emerald-50 leading-relaxed italic font-serif">
               "{message.message}"
             </blockquote>
+
+            {message.gif_url && (
+              <div className="mt-3 max-h-52 rounded-xl overflow-hidden bg-black/40 flex items-center justify-center p-1 border border-emerald-700/40">
+                <img
+                  src={message.gif_url}
+                  alt="GIF anexo"
+                  referrerPolicy="no-referrer"
+                  className="max-h-48 max-w-full rounded-lg object-contain"
+                />
+              </div>
+            )}
           </div>
 
           {/* Card Footer */}

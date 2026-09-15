@@ -156,18 +156,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           </p>
         </div>
       </div>
-
-      {/* RH link bottom */}
-      <div className="text-center pt-2">
-        <button
-          type="button"
-          onClick={onOpenAdmin}
-          className="inline-flex items-center gap-1.5 text-xs text-emerald-800 hover:text-[#00A868] transition-colors cursor-pointer"
-        >
-          <Lock className="w-3 h-3 text-amber-500" />
-          <span>Equipe de RH? Clique aqui para acessar o painel administrativo</span>
-        </button>
-      </div>
     </div>
   );
 };

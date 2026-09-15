@@ -106,7 +106,16 @@ function rateLimitMiddleware(req: Request, res: Response, next: NextFunction): v
   next();
 }
 
-// Admin authentication middleware
+// Check if an email belongs to the authorized RH admin
+const RH_ADMIN_EMAILS = ['aysla.mendes@querostone.com.br', 'aysla.mendes@querostone.com'];
+
+function isRHEmail(email?: string): boolean {
+  if (!email) return false;
+  const clean = email.trim().toLowerCase();
+  return RH_ADMIN_EMAILS.includes(clean);
+}
+
+// Admin authentication middleware - strictly restricted to Aysla Mendes or admin credentials
 function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers['authorization'] || '';
   const keyHeader = req.headers['x-admin-key'] as string;
@@ -114,6 +123,7 @@ function requireAdminAuth(req: Request, res: Response, next: NextFunction): void
 
   const token = authHeader.replace(/^Bearer\s+/i, '').trim();
 
+  // If provided admin token or password
   if (
     token === ADMIN_TOKEN ||
     keyHeader === ADMIN_PASSWORD ||
@@ -124,7 +134,23 @@ function requireAdminAuth(req: Request, res: Response, next: NextFunction): void
     return;
   }
 
-  res.status(401).json({ error: 'Acesso não autorizado ao painel administrativo do RH.' });
+  // Check if token belongs to an authenticated collaborator who is Aysla Mendes
+  if (token && token.startsWith('collab_')) {
+    const parts = token.split('_');
+    if (parts.length >= 3) {
+      const collabId = parts[1];
+      const expected = generateCollabToken(collabId);
+      if (token === expected) {
+        const collab = dbManager.findCollaboratorById(collabId);
+        if (collab && collab.active && isRHEmail(collab.email)) {
+          next();
+          return;
+        }
+      }
+    }
+  }
+
+  res.status(401).json({ error: 'Acesso restrito: apenas o e-mail de RH aysla.mendes@querostone.com.br possui permissão.' });
 }
 
 // ==================== COLLABORATOR AUTH & PROFILE ROUTES ====================
@@ -165,10 +191,13 @@ app.post('/api/auth/collaborator/login', (req: Request, res: Response) => {
     const token = generateCollabToken(collaborator.id);
     const firstName = collaborator.full_name.split(' ')[0];
     const summary = dbManager.getCollaboratorSummary(collaborator.id);
+    const isAdmin = isRHEmail(collaborator.email);
+    const adminToken = isAdmin ? ADMIN_TOKEN : undefined;
 
     res.json({
       success: true,
       token,
+      admin_token: adminToken,
       collaborator: {
         id: collaborator.id,
         full_name: collaborator.full_name,
@@ -177,6 +206,7 @@ app.post('/api/auth/collaborator/login', (req: Request, res: Response) => {
         operation: collaborator.operation,
         role: collaborator.role,
         active: collaborator.active,
+        is_admin: isAdmin,
         unread_count: summary.unreadMessages,
         received_count: summary.totalMessages,
       },
@@ -193,6 +223,7 @@ app.get('/api/collaborator/me', requireCollaboratorAuth, (req: AuthenticatedRequ
     const col = req.collaborator!;
     const summary = dbManager.getCollaboratorSummary(col.id);
     const firstName = col.full_name.split(' ')[0];
+    const isAdmin = isRHEmail(col.email);
 
     res.json({
       collaborator: {
@@ -203,6 +234,7 @@ app.get('/api/collaborator/me', requireCollaboratorAuth, (req: AuthenticatedRequ
         operation: col.operation,
         role: col.role,
         active: col.active,
+        is_admin: isAdmin,
         unread_count: summary.unreadMessages,
         received_count: summary.totalMessages,
       },
@@ -262,6 +294,49 @@ app.delete('/api/collaborator/messages/:id', requireCollaboratorAuth, (req: Auth
   }
 });
 
+// React to a received message
+app.patch('/api/collaborator/messages/:id/react', requireCollaboratorAuth, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const col = req.collaborator!;
+    const { id } = req.params;
+    const { reaction } = req.body;
+
+    if (!reaction || typeof reaction !== 'string') {
+      res.status(400).json({ error: 'Reação inválida.' });
+      return;
+    }
+
+    const success = dbManager.reactToMessage(col.id, id, reaction.trim().slice(0, 10));
+    if (!success) {
+      res.status(404).json({ error: 'Mensagem não encontrada na sua caixa postal.' });
+      return;
+    }
+
+    res.json({ success: true, messageId: id, reaction });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro ao reagir à mensagem.' });
+  }
+});
+
+// Send thank you note for a received message
+app.post('/api/collaborator/messages/:id/thank', requireCollaboratorAuth, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const col = req.collaborator!;
+    const { id } = req.params;
+    const { note } = req.body;
+
+    if (!note || typeof note !== 'string' || !note.trim()) {
+      res.status(400).json({ error: 'Por favor, escreva ou escolha uma mensagem de agradecimento.' });
+      return;
+    }
+
+    const result = dbManager.thankMessage(col.id, id, note);
+    res.json({ success: true, messageId: id, thank_you_note: result.thank_you_note });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Erro ao enviar agradecimento.' });
+  }
+});
+
 // Collaborator notifications
 app.get('/api/collaborator/notifications', requireCollaboratorAuth, (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -307,7 +382,7 @@ app.get('/api/recipients', optionalCollaboratorAuth, (req: AuthenticatedRequest,
 app.post('/api/messages', rateLimitMiddleware, requireCollaboratorAuth, (req: AuthenticatedRequest, res: Response) => {
   try {
     const sender = req.collaborator!;
-    const { recipient_id, message, category, confirmedRespectful } = req.body;
+    const { recipient_id, message, category, confirmedRespectful, reaction, color_theme, gif_url } = req.body;
 
     if (!recipient_id) {
       res.status(400).json({ error: 'Por favor, selecione quem receberá a mensagem.' });
@@ -352,6 +427,9 @@ app.post('/api/messages', rateLimitMiddleware, requireCollaboratorAuth, (req: Au
       recipient_id,
       message: trimmed,
       category,
+      reaction: typeof reaction === 'string' ? reaction.slice(0, 10) : undefined,
+      color_theme: typeof color_theme === 'string' ? color_theme.slice(0, 30) : undefined,
+      gif_url: typeof gif_url === 'string' && gif_url.trim() ? gif_url.trim() : undefined,
     });
 
     res.status(201).json({
@@ -361,6 +439,9 @@ app.post('/api/messages', rateLimitMiddleware, requireCollaboratorAuth, (req: Au
         recipient_name: saved.recipient_name,
         operation: saved.operation,
         category: saved.category,
+        reaction: saved.reaction,
+        color_theme: saved.color_theme,
+        gif_url: saved.gif_url,
         created_at: saved.created_at,
         status: saved.status,
       },

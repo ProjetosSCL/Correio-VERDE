@@ -1,6 +1,6 @@
 import React from 'react';
-import { Mail, ShieldCheck, Lock, ArrowLeft, Inbox, User, LogOut } from 'lucide-react';
-import { CollaboratorProfile } from '../types';
+import { Mail, ShieldCheck, ArrowLeft, Inbox, User, LogOut, Settings } from 'lucide-react';
+import { CollaboratorProfile, isRHAdmin } from '../types';
 import { YellowRibbon } from './YellowRibbon';
 
 interface HeaderProps {
@@ -114,21 +114,21 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {/* RH Button */}
-              <button
-                id="btn-header-admin"
-                onClick={onOpenAdmin}
-                className="inline-flex items-center p-2 rounded-xl text-emerald-700 hover:text-emerald-900 hover:bg-emerald-50 border border-emerald-200 transition-colors"
-                title="Acesso exclusivo para RH"
-              >
-                <Lock className="w-3.5 h-3.5 text-amber-500" />
-                {isAdminAuthenticated && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#00A868] ml-1"></span>
-                )}
-              </button>
+              {/* RH Button - strictly only for aysla.mendes@querostone.com.br */}
+              {isRHAdmin(collaborator.email) && (
+                <button
+                  id="btn-header-admin"
+                  onClick={onOpenAdmin}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-amber-950 bg-gradient-to-r from-amber-300 via-amber-400 to-amber-300 hover:from-amber-400 hover:to-amber-500 shadow-sm transition-all cursor-pointer border border-amber-500/40 animate-pulse hover:animate-none"
+                  title="Painel de RH Stone SCL - Aysla Mendes"
+                >
+                  <Settings className="w-3.5 h-3.5 text-amber-900" />
+                  <span>Painel RH</span>
+                </button>
+              )}
             </div>
           ) : (
-            /* Logged out state */
+            /* Logged out state - no RH button visible to public */
             <div className="flex items-center gap-2">
               <div className="hidden md:flex items-center gap-1.5 text-xs text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 font-medium">
                 <ShieldCheck className="w-3.5 h-3.5 text-[#00A868]" />
@@ -137,6 +137,7 @@ export const Header: React.FC<HeaderProps> = ({
 
               {onNavigateToLogin && (
                 <button
+                  id="btn-header-login"
                   onClick={onNavigateToLogin}
                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-white bg-[#00A868] hover:bg-[#008F58] active:scale-[0.98] shadow-sm transition-all cursor-pointer"
                 >
@@ -144,19 +145,6 @@ export const Header: React.FC<HeaderProps> = ({
                   <span>Acessar Perfil</span>
                 </button>
               )}
-
-              <button
-                id="btn-header-admin"
-                onClick={onOpenAdmin}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-emerald-800 hover:text-emerald-950 bg-white hover:bg-emerald-50 border border-emerald-200 shadow-xs transition-colors"
-                title="Acesso exclusivo para a equipe de RH"
-              >
-                <Lock className="w-3.5 h-3.5 text-amber-500" />
-                <span className="hidden sm:inline">RH</span>
-                {isAdminAuthenticated && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#00A868]"></span>
-                )}
-              </button>
             </div>
           )}
         </div>

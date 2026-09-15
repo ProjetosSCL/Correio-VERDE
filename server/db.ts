@@ -80,6 +80,26 @@ class DBManager {
             this.cache.notifications = [];
           }
           let touched = false;
+
+          // Always ensure Aysla Mendes (RH Admin) is seeded
+          const RH_EMAIL = 'aysla.mendes@querostone.com.br';
+          const hasAysla = this.cache.recipients.some(
+            (r) => r.email.toLowerCase() === RH_EMAIL || r.email.toLowerCase() === 'aysla.mendes@querostone.com'
+          );
+          if (!hasAysla) {
+            this.cache.recipients.unshift({
+              id: 'collab-rh-aysla',
+              full_name: 'Aysla Mendes',
+              email: RH_EMAIL,
+              operation: 'Stone SCL',
+              role: 'Recursos Humanos / Gente e Gestão',
+              active: true,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+            touched = true;
+          }
+
           this.cache.recipients.forEach((r) => {
             if (!r.email) {
               r.email = generateEmailFromName(r.full_name);
@@ -134,6 +154,7 @@ class DBManager {
       .map((r) => ({
         id: r.id,
         full_name: r.full_name,
+        email: r.email,
         operation: r.operation,
         role: r.role,
       }));
@@ -149,6 +170,10 @@ class DBManager {
   public getRecipientById(id: string): Collaborator | undefined {
     const db = this.readSync();
     return db.recipients.find((r) => r.id === id);
+  }
+
+  public findCollaboratorById(id: string): Collaborator | undefined {
+    return this.getRecipientById(id);
   }
 
   public findCollaboratorByEmail(email: string): Collaborator | undefined {
@@ -368,11 +393,59 @@ class DBManager {
         id: m.id,
         category: m.category,
         message: m.message,
+        reaction: m.reaction,
+        color_theme: m.color_theme,
+        gif_url: m.gif_url,
+        recipient_reaction: m.recipient_reaction,
+        thank_you_note: m.thank_you_note,
+        thank_you_at: m.thank_you_at,
         created_at: m.created_at,
         read_at: m.read_at,
         archived_at: m.archived_at,
         status: m.status,
       }));
+  }
+
+  public reactToMessage(collaboratorId: string, messageId: string, reaction: string): boolean {
+    const db = this.readSync();
+    const msg = db.messages.find(
+      (m) => m.id === messageId && m.recipient_id === collaboratorId
+    );
+    if (!msg) return false;
+
+    msg.recipient_reaction = msg.recipient_reaction === reaction ? null : reaction;
+    this.writeSync(db);
+    return true;
+  }
+
+  public thankMessage(collaboratorId: string, messageId: string, note: string): { success: boolean; thank_you_note: string } {
+    const db = this.readSync();
+    const msg = db.messages.find(
+      (m) => m.id === messageId && m.recipient_id === collaboratorId
+    );
+    if (!msg) throw new Error('Mensagem não encontrada.');
+
+    const cleanNote = note.trim().slice(0, 300);
+    msg.thank_you_note = cleanNote;
+    msg.thank_you_at = new Date().toISOString();
+
+    // Notify the sender if recorded anonymously
+    if (msg.sender_id && msg.sender_id !== collaboratorId) {
+      if (!Array.isArray(db.notifications)) {
+        db.notifications = [];
+      }
+      db.notifications.unshift({
+        id: `notif-${Date.now()}-${crypto.randomUUID().slice(0, 4)}`,
+        collaborator_id: msg.sender_id,
+        message_id: msg.id,
+        text: `💛 Seu recado foi lido e o colega enviou um agradecimento: "${cleanNote}"`,
+        read_at: null,
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    this.writeSync(db);
+    return { success: true, thank_you_note: cleanNote };
   }
 
   public getCollaboratorSummary(collaboratorId: string): { totalMessages: number; unreadMessages: number } {
@@ -444,6 +517,9 @@ class DBManager {
     recipient_id: string;
     message: string;
     category?: string;
+    reaction?: string;
+    color_theme?: string;
+    gif_url?: string;
   }): Message {
     const db = this.readSync();
     const recipient = db.recipients.find((r) => r.id === payload.recipient_id);
@@ -470,6 +546,12 @@ class DBManager {
       recipient_role: recipient.role,
       message: payload.message.trim(),
       category: payload.category || undefined,
+      reaction: payload.reaction || undefined,
+      color_theme: payload.color_theme || undefined,
+      gif_url: payload.gif_url || undefined,
+      recipient_reaction: null,
+      thank_you_note: null,
+      thank_you_at: null,
       created_at: new Date().toISOString(),
       read_at: null,
       archived_at: null,
@@ -612,6 +694,8 @@ class DBManager {
       'Operação',
       'Cargo',
       'Categoria',
+      'Reação Emoji',
+      'Tema Cor',
       'Status',
       'Data e Hora',
       'Lida em',
@@ -624,6 +708,8 @@ class DBManager {
       `"${m.operation.replace(/"/g, '""')}"`,
       `"${(m.recipient_role || '').replace(/"/g, '""')}"`,
       `"${(m.category || 'Não informada').replace(/"/g, '""')}"`,
+      `"${(m.reaction || '-').replace(/"/g, '""')}"`,
+      `"${(m.color_theme || 'emerald').replace(/"/g, '""')}"`,
       m.status === 'delivered' ? 'Entregue' : m.status === 'archived' ? 'Arquivada' : 'Pendente',
       new Date(m.created_at).toLocaleString('pt-BR'),
       m.read_at ? new Date(m.read_at).toLocaleString('pt-BR') : 'Não lida',

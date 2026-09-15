@@ -24,10 +24,14 @@ export const RecipientSelectScreen: React.FC<RecipientSelectScreenProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOperation, setSelectedOperation] = useState<string>('all');
 
+  const safeRecipients = useMemo(() => {
+    return Array.isArray(recipients) ? recipients : [];
+  }, [recipients]);
+
   // Filter out self if logged in
   const availableRecipients = useMemo(() => {
-    return recipients.filter((r) => !currentCollaboratorId || r.id !== currentCollaboratorId);
-  }, [recipients, currentCollaboratorId]);
+    return safeRecipients.filter((r) => !currentCollaboratorId || r.id !== currentCollaboratorId);
+  }, [safeRecipients, currentCollaboratorId]);
 
   // Check if operations are varied
   const hasMultipleOperations = useMemo(() => {

@@ -126,6 +126,9 @@ export default function App() {
     recipient_id: string;
     message: string;
     category?: string;
+    reaction?: string;
+    color_theme?: string;
+    gif_url?: string;
     confirmedRespectful: boolean;
   }) => {
     setIsSubmitting(true);
@@ -318,6 +321,11 @@ export default function App() {
         {currentView === 'collab-home' && collaborator && (
           <CollaboratorHomeScreen
             collaborator={collaborator}
+            summary={{
+              totalMessages: collaborator.received_count || 0,
+              unreadMessages: unreadInboxCount ?? (collaborator.unread_count || 0),
+              latestMessageDate: null,
+            }}
             onNavigateToInbox={handleNavigateToInbox}
             onStartSendMessage={handleStartMessage}
             onOpenProfile={() => setIsProfileModalOpen(true)}
@@ -330,7 +338,9 @@ export default function App() {
           <InboxScreen
             token={collabToken}
             collaborator={collaborator}
+            onBack={handleBackToHome}
             onBackToHome={handleBackToHome}
+            onNavigateToSend={handleStartMessage}
             onSendReply={handleSendReplyFromInbox}
           />
         )}
@@ -349,13 +359,17 @@ export default function App() {
         )}
 
         {/* Step 2: Write Message */}
-        {currentView === 'write-message' && selectedRecipient && (
+        {currentView === 'write-message' && (
           <WriteMessageScreen
+            recipients={recipients}
+            selectedRecipient={selectedRecipient}
             recipient={selectedRecipient}
+            onSelectRecipient={setSelectedRecipient}
             onSendMessage={handleSendMessage}
             onChangeRecipient={handleBackToSelect}
             onBack={handleBackToSelect}
             isSubmitting={isSubmitting}
+            currentCollaboratorId={collaborator?.id}
           />
         )}
 

@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   ChevronDown,
   ListPlus,
+  Check,
 } from 'lucide-react';
 import {
   Message,
@@ -65,6 +66,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Recipients filter
   const [recipientSearch, setRecipientSearch] = useState('');
   const [recipientOpFilter, setRecipientOpFilter] = useState('all');
+
+  // Dropdown-based Collaborator Manager State (RH request)
+  const [selectedDropdownRecId, setSelectedDropdownRecId] = useState<string>('new');
+  const [dropdownName, setDropdownName] = useState('');
+  const [dropdownEmail, setDropdownEmail] = useState('');
+  const [dropdownOperation, setDropdownOperation] = useState('Stone SCL');
+  const [dropdownRole, setDropdownRole] = useState('');
+  const [dropdownActive, setDropdownActive] = useState(true);
+  const [isSavingDropdown, setIsSavingDropdown] = useState(false);
 
   // Modals
   const [printCardMessage, setPrintCardMessage] = useState<Message | null>(null);
@@ -239,6 +249,110 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  // Sort recipients for the dropdown alphabetically
+  const sortedRecipientsForDropdown = useMemo(() => {
+    return [...(recipients || [])].sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'pt-BR'));
+  }, [recipients]);
+
+  const handleSelectDropdownRec = (id: string) => {
+    setSelectedDropdownRecId(id);
+    if (id === 'new') {
+      setDropdownName('');
+      setDropdownEmail('');
+      setDropdownOperation('Stone SCL');
+      setDropdownRole('');
+      setDropdownActive(true);
+    } else {
+      const found = recipients.find((r) => r.id === id);
+      if (found) {
+        setDropdownName(found.full_name);
+        setDropdownEmail(found.email || '');
+        setDropdownOperation(found.operation || 'Stone SCL');
+        setDropdownRole(found.role || '');
+        setDropdownActive(found.active);
+      }
+    }
+  };
+
+  const handleSaveDropdownCollaborator = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dropdownName.trim()) {
+      showNotice('O nome do colaborador é obrigatório.');
+      return;
+    }
+    if (!dropdownEmail.trim()) {
+      showNotice('O e-mail do colaborador é obrigatório para o login restrito.');
+      return;
+    }
+    setIsSavingDropdown(true);
+    try {
+      if (selectedDropdownRecId === 'new') {
+        const res = await fetch('/api/admin/recipients', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${adminToken}`,
+          },
+          body: JSON.stringify({
+            full_name: dropdownName.trim(),
+            email: dropdownEmail.trim(),
+            operation: dropdownOperation.trim() || 'Stone SCL',
+            role: dropdownRole.trim() || undefined,
+            active: dropdownActive,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Erro ao cadastrar colaborador.');
+        showNotice(`Colaborador(a) "${dropdownName}" cadastrado(a) com sucesso!`);
+        if (data.recipient?.id) {
+          setSelectedDropdownRecId(data.recipient.id);
+        }
+      } else {
+        const res = await fetch(`/api/admin/recipients/${selectedDropdownRecId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${adminToken}`,
+          },
+          body: JSON.stringify({
+            full_name: dropdownName.trim(),
+            email: dropdownEmail.trim(),
+            operation: dropdownOperation.trim() || 'Stone SCL',
+            role: dropdownRole.trim() || undefined,
+            active: dropdownActive,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Erro ao atualizar dados.');
+        showNotice(`Colaborador(a) "${dropdownName}" atualizado(a) com sucesso!`);
+      }
+      fetchData();
+    } catch (err: any) {
+      showNotice(err.message || 'Erro ao salvar colaborador.');
+    } finally {
+      setIsSavingDropdown(false);
+    }
+  };
+
+  const handleDeleteDropdownCollaborator = async () => {
+    if (selectedDropdownRecId === 'new') return;
+    if (!window.confirm(`Deseja realmente remover "${dropdownName}" do sistema?`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/recipients/${selectedDropdownRecId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      if (!res.ok) throw new Error('Erro ao excluir colaborador.');
+      showNotice(`Colaborador(a) removido(a) com sucesso.`);
+      handleSelectDropdownRec('new');
+      fetchData();
+    } catch (err: any) {
+      showNotice(err.message || 'Erro ao excluir.');
+    }
+  };
+
   // Import CSV handler
   const handleImportCsv = async (csvText: string) => {
     const res = await fetch('/api/admin/recipients/import', {
@@ -301,7 +415,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Filtered messages
   const filteredMessages = useMemo(() => {
-    return messages.filter((m) => {
+    return (messages || []).filter((m) => {
       const matchesStatus = statusFilter === 'all' || m.status === statusFilter;
       const matchesOp = operationFilter === 'all' || m.operation === operationFilter;
       const matchesCat = categoryFilter === 'all' || m.category === categoryFilter;
@@ -320,12 +434,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Delivery queue (pending messages prioritized)
   const deliveryQueue = useMemo(() => {
-    return messages.filter((m) => m.status === 'pending');
+    return (messages || []).filter((m) => m.status === 'pending');
   }, [messages]);
 
   // Filtered recipients
   const filteredRecipients = useMemo(() => {
-    return recipients.filter((r) => {
+    return (recipients || []).filter((r) => {
       const matchesOp = recipientOpFilter === 'all' || r.operation === recipientOpFilter;
       const q = recipientSearch.toLowerCase().trim();
       const matchesSearch =
@@ -508,7 +622,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             }`}
           >
             <Users className="w-4 h-4" />
-            <span>Gerenciar Destinatários</span>
+            <span>Colaboradores (Lista Suspensa)</span>
             <span
               className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${
                 activeTab === 'recipients'
@@ -813,14 +927,212 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* ==================== TAB 3: GESTÃO DE DESTINATÁRIOS ==================== */}
       {activeTab === 'recipients' && (
-        <div className="space-y-4">
+        <div className="space-y-5">
+          {/* =========================================================
+              GESTOR DE COLABORADORES POR LISTA SUSPENSA (NOME & E-MAIL)
+             ========================================================= */}
+          <div className="rounded-3xl bg-[#092518] border-2 border-emerald-500/80 p-5 sm:p-7 space-y-4 shadow-xl shadow-black/20">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-emerald-800/60 pb-3">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-['Outfit',sans-serif] font-black text-white text-lg sm:text-xl flex items-center gap-2">
+                    <Users className="w-5 h-5 text-[#00D084]" />
+                    <span>Cadastro & Edição por Lista Suspensa</span>
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider bg-[#00D084]/20 text-[#00D084] border border-[#00D084]/40">
+                    Acesso Restrito RH
+                  </span>
+                </div>
+                <p className="text-xs text-emerald-300/85 pt-1">
+                  Selecione qualquer colaborador na lista suspensa para editar ou escolha "Cadastrar Novo" para adicionar nome e e-mail corporativo.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  id="btn-dropdown-new-collab"
+                  onClick={() => handleSelectDropdownRec('new')}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold text-[#061d12] bg-[#00D084] hover:bg-[#02de7a] transition-all cursor-pointer shadow-sm flex items-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Cadastrar Novo</span>
+                </button>
+              </div>
+            </div>
+
+            {/* The Dropdown selector */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="rh-collaborator-dropdown-select"
+                className="text-xs font-bold text-emerald-200 flex items-center justify-between"
+              >
+                <span>Lista suspensa de colaboradores ({recipients.length} cadastrados):</span>
+                <span className="text-[11px] text-emerald-400 font-normal">
+                  {selectedDropdownRecId === 'new' ? 'Modo: Novo Cadastro' : 'Modo: Editando Colaborador'}
+                </span>
+              </label>
+              <select
+                id="rh-collaborator-dropdown-select"
+                value={selectedDropdownRecId}
+                onChange={(e) => handleSelectDropdownRec(e.target.value)}
+                className="w-full p-3.5 rounded-xl bg-[#05180f] border-2 border-emerald-500/80 text-white text-sm font-medium focus:outline-none focus:border-[#00D084] focus:ring-2 focus:ring-[#00D084]/20 shadow-xs cursor-pointer"
+              >
+                <option value="new">➕ [Cadastrar Novo Colaborador — Adicionar Nome e E-mail]</option>
+                {sortedRecipientsForDropdown.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.full_name} • {r.email || 'Sem e-mail'} • {r.operation} {r.role ? `(${r.role})` : ''} {!r.active ? '⛔ [Inativo]' : '✅'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Inline Form */}
+            <form onSubmit={handleSaveDropdownCollaborator} className="space-y-4 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {/* Nome Completo */}
+                <div className="space-y-1 sm:col-span-2 lg:col-span-1">
+                  <label className="text-xs font-semibold text-emerald-300">
+                    Nome Completo *
+                  </label>
+                  <input
+                    id="input-dropdown-name"
+                    type="text"
+                    required
+                    placeholder="Ex: Maria Souza"
+                    value={dropdownName}
+                    onChange={(e) => setDropdownName(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#05180f] border border-emerald-700 text-sm text-white placeholder-emerald-700 focus:outline-none focus:border-[#00D084]"
+                  />
+                </div>
+
+                {/* Email Corporativo */}
+                <div className="space-y-1 sm:col-span-2 lg:col-span-1">
+                  <label className="text-xs font-semibold text-emerald-300">
+                    E-mail Corporativo (@querostone.com.br) *
+                  </label>
+                  <input
+                    id="input-dropdown-email"
+                    type="email"
+                    required
+                    placeholder="maria.souza@querostone.com.br"
+                    value={dropdownEmail}
+                    onChange={(e) => setDropdownEmail(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#05180f] border border-emerald-700 text-sm text-white placeholder-emerald-700 focus:outline-none focus:border-[#00D084]"
+                  />
+                </div>
+
+                {/* Operação / Polo */}
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-emerald-300">
+                    Operação / Polo SCL *
+                  </label>
+                  <input
+                    id="input-dropdown-op"
+                    type="text"
+                    required
+                    list="rh-operations-datalist"
+                    placeholder="Ex: Polo Juazeiro do Norte"
+                    value={dropdownOperation}
+                    onChange={(e) => setDropdownOperation(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#05180f] border border-emerald-700 text-sm text-white placeholder-emerald-700 focus:outline-none focus:border-[#00D084]"
+                  />
+                  <datalist id="rh-operations-datalist">
+                    {STONE_OPERATIONS.map((op) => (
+                      <option key={op} value={op} />
+                    ))}
+                  </datalist>
+                </div>
+
+                {/* Cargo / Função (Opcional) */}
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-emerald-300">
+                    Cargo / Função (Opcional)
+                  </label>
+                  <input
+                    id="input-dropdown-role"
+                    type="text"
+                    placeholder="Ex: Agente Stone, Consultor(a)..."
+                    value={dropdownRole}
+                    onChange={(e) => setDropdownRole(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#05180f] border border-emerald-700 text-sm text-white placeholder-emerald-700 focus:outline-none focus:border-[#00D084]"
+                  />
+                </div>
+
+                {/* Status Ativo */}
+                <div className="space-y-1 flex flex-col justify-end">
+                  <label className="flex items-center gap-2 p-2.5 rounded-xl bg-[#05180f] border border-emerald-700 text-xs text-white cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={dropdownActive}
+                      onChange={(e) => setDropdownActive(e.target.checked)}
+                      className="w-4 h-4 accent-[#00D084]"
+                    />
+                    <span>Ativo (aparece no Correio Verde)</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-emerald-800/40">
+                <div className="text-xs text-emerald-400">
+                  {selectedDropdownRecId === 'new' ? (
+                    <span>Preencha os campos para cadastrar um novo colaborador</span>
+                  ) : (
+                    <span>Alterando dados do colaborador selecionado</span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {selectedDropdownRecId !== 'new' && (
+                    <button
+                      type="button"
+                      id="btn-dropdown-delete-collab"
+                      onClick={handleDeleteDropdownCollaborator}
+                      className="px-3.5 py-2 rounded-xl text-xs font-semibold text-red-300 hover:text-white bg-red-950/60 hover:bg-red-900 border border-red-800 transition-colors cursor-pointer"
+                    >
+                      Excluir
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleSelectDropdownRec('new')}
+                    className="px-3.5 py-2 rounded-xl text-xs font-semibold text-emerald-300 hover:text-white bg-emerald-950 hover:bg-emerald-900 border border-emerald-800 transition-colors cursor-pointer"
+                  >
+                    Limpar
+                  </button>
+
+                  <button
+                    type="submit"
+                    id="btn-dropdown-save-collab"
+                    disabled={isSavingDropdown}
+                    className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold text-[#061d12] bg-[#00D084] hover:bg-[#02de7a] transition-all cursor-pointer shadow-md disabled:opacity-50"
+                  >
+                    {isSavingDropdown ? (
+                      <div className="w-3.5 h-3.5 border-2 border-[#061d12] border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Check className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {selectedDropdownRecId === 'new'
+                        ? 'Salvar Novo Colaborador'
+                        : 'Atualizar Dados do Colaborador'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+
+          {/* Existing Management Card Header */}
           <div className="rounded-2xl bg-[#092518] border border-emerald-800/40 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="font-['Outfit',sans-serif] font-bold text-white text-base">
-                Lista de Colaboradores (Destinatários)
+                Tabela Geral de Colaboradores (Destinatários)
               </h3>
               <p className="text-xs text-emerald-300">
-                Apenas colaboradores ativos aparecem para seleção pública no Correio Verde.
+                Visualize todos os colaboradores, filtre por polo ou importe listas em massa.
               </p>
             </div>
 
@@ -836,7 +1148,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <button
                 onClick={() => setIsCsvImportOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-emerald-200 bg-emerald-950 hover:bg-emerald-900 border border-emerald-700/60 transition-colors"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-emerald-200 bg-emerald-950 hover:bg-emerald-900 border border-emerald-700/60 transition-colors"
               >
                 <Upload className="w-4 h-4 text-[#00D084]" />
                 <span>Importar CSV</span>
