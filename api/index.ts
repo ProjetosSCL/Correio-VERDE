@@ -1,7 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
 import dotenv from 'dotenv';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
@@ -131,14 +129,6 @@ export interface CampaignStats {
 // ==================== DATABASE & STORAGE ====================
 
 
-interface DatabaseSchema {
-  recipients: Collaborator[];
-  messages: Message[];
-  notifications: InAppNotification[];
-}
-
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'correio_verde.json');
 
 export function generateEmailFromName(name: string): string {
   const clean = name
@@ -252,56 +242,89 @@ export function isValidPrivateKey(key: string): boolean {
   }
 }
 
-export function getFirestoreDb(): Firestore | null {
-  if (firestoreChecked) return firestoreInstance;
-  firestoreChecked = true;
+let ensuredDefaults = false;
 
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const rawPrivateKey = process.env.FIREBASE_PRIVATE_KEY;
+export function getFirestoreDb(): Firestore {
+  if (firestoreInstance) return firestoreInstance;
 
-  if (projectId && clientEmail && rawPrivateKey) {
+  let projectId = (
+    process.env.FIREBASE_PROJECT_ID ||
+    process.env.GCP_PROJECT ||
+    process.env.GCLOUD_PROJECT ||
+    ''
+  ).trim();
+  let clientEmail = (process.env.FIREBASE_CLIENT_EMAIL || '').trim();
+  let rawPrivateKey = (process.env.FIREBASE_PRIVATE_KEY || '').trim();
+
+  const serviceAccountJson =
+    process.env.FIREBASE_SERVICE_ACCOUNT || process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+  if (serviceAccountJson && serviceAccountJson.trim().startsWith('{')) {
     try {
-      const formattedKey = formatPrivateKey(rawPrivateKey);
+      const sa = JSON.parse(serviceAccountJson.trim());
+      if (sa.project_id && !projectId) projectId = sa.project_id;
+      if (sa.client_email && !clientEmail) clientEmail = sa.client_email;
+      if (sa.private_key && !rawPrivateKey) rawPrivateKey = sa.private_key;
+    } catch {}
+  }
 
-      if (!isValidPrivateKey(formattedKey)) {
-        console.warn(
-          `[Firebase Firestore] A chave privada fornecida em FIREBASE_PRIVATE_KEY é inválida ou está incompleta (tamanho: ${rawPrivateKey.length} caracteres). ` +
-            `O sistema funcionará normalmente com persistência local em data/correio_verde.json. ` +
-            `Para ativar o Firestore, verifique se a chave RSA completa (com ~1700 caracteres) foi configurada.`
-        );
-        firestoreInstance = null;
-        return null;
-      }
+  if (rawPrivateKey.startsWith('{')) {
+    try {
+      const sa = JSON.parse(rawPrivateKey);
+      if (sa.project_id && !projectId) projectId = sa.project_id;
+      if (sa.client_email && !clientEmail) clientEmail = sa.client_email;
+      if (sa.private_key) rawPrivateKey = sa.private_key;
+    } catch {}
+  }
 
-      if (!getApps().length) {
-        initializeApp({
-          credential: cert({
-            projectId,
-            clientEmail,
-            privateKey: formattedKey,
-          }),
-        });
-      }
+  if (!projectId) {
+    projectId = 'correioverde-49e0c';
+  }
+
+  if (getApps().length > 0) {
+    firestoreInstance = getFirestore();
+    return firestoreInstance;
+  }
+
+  const formattedKey = formatPrivateKey(rawPrivateKey);
+
+  if (clientEmail && formattedKey && formattedKey.length > 200) {
+    try {
+      initializeApp({
+        credential: cert({
+          projectId,
+          clientEmail,
+          privateKey: formattedKey,
+        }),
+      });
       firestoreInstance = getFirestore();
-      console.log(`[Firebase Firestore] Conectado com sucesso ao projeto: ${projectId}`);
-
-      // Ensure Aysla Mendes (RH Admin) is created in Firestore if not already present
+      console.log(`[Firebase Firestore] SDK Admin inicializado com cert() para projeto: ${projectId}`);
       ensureFirestoreDefaults(firestoreInstance).catch((err) => {
         console.warn('[Firebase Firestore] Aviso ao sincronizar administrador inicial:', err?.message || err);
       });
+      return firestoreInstance;
     } catch (err: any) {
-      console.warn('[Firebase Firestore] Aviso ao inicializar SDK Admin do Firebase:', err?.message || err);
-      firestoreInstance = null;
+      console.error('[Firebase Firestore] Erro ao inicializar SDK com cert():', err?.message || err);
     }
-  } else {
-    console.log('[Database] Variáveis do Firebase Admin não detectadas. Utilizando armazenamento local JSON (data/correio_verde.json).');
   }
 
-  return firestoreInstance;
+  try {
+    initializeApp({
+      projectId,
+    });
+    firestoreInstance = getFirestore();
+    console.log(`[Firebase Firestore] SDK Admin inicializado com credenciais padrão para projeto: ${projectId}`);
+    ensureFirestoreDefaults(firestoreInstance).catch((err) => {
+      console.warn('[Firebase Firestore] Aviso ao sincronizar administrador inicial:', err?.message || err);
+    });
+    return firestoreInstance;
+  } catch (err: any) {
+    console.error('[Firebase Firestore] Falha crítica ao inicializar SDK Admin do Firebase:', err?.message || err);
+    throw new Error(`Falha ao conectar ao Firestore no projeto "${projectId}": ${err?.message || err}`);
+  }
 }
 
 async function ensureFirestoreDefaults(db: Firestore): Promise<void> {
+  if (ensuredDefaults) return;
   try {
     const ayslaRef = db.collection('recipients').doc('collab-rh-aysla');
     const ayslaDoc = await ayslaRef.get();
@@ -319,172 +342,21 @@ async function ensureFirestoreDefaults(db: Firestore): Promise<void> {
       });
       console.log('[Firebase Firestore] Administradora Aysla Mendes (RH) registrada no Firestore.');
     }
+    ensuredDefaults = true;
   } catch (err) {
     console.error('[Firebase Firestore] Falha ao verificar registro inicial do RH:', err);
   }
 }
 
 class DBManager {
-  private cache: DatabaseSchema | null = null;
-
-  constructor() {
-    this.ensureLocalFile();
-  }
-
-  // ==================== LOCAL FILE BACKUP UTILS ====================
-  private ensureLocalFile() {
-    try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
-      if (!fs.existsSync(DB_FILE)) {
-        const initial: DatabaseSchema = {
-          recipients: [
-            {
-              id: 'collab-rh-aysla',
-              full_name: 'Aysla Mendes',
-              email: 'aysla.mendes@querostone.com.br',
-              operation: 'Stone SCL',
-              role: 'Recursos Humanos / Gente e Gestão',
-              active: true,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            },
-          ],
-          messages: [],
-          notifications: [],
-        };
-        this.writeLocalSync(initial);
-        this.cache = initial;
-      }
-    } catch (err) {
-      // In read-only or serverless filesystem, keep in memory
-      this.cache = {
-        recipients: [
-          {
-            id: 'collab-rh-aysla',
-            full_name: 'Aysla Mendes',
-            email: 'aysla.mendes@querostone.com.br',
-            operation: 'Stone SCL',
-            role: 'Recursos Humanos / Gente e Gestão',
-            active: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ],
-        messages: [],
-        notifications: [],
-      };
-    }
-  }
-
-  private readLocalSync(): DatabaseSchema {
-    if (this.cache) return this.cache;
-    try {
-      if (fs.existsSync(DB_FILE)) {
-        const raw = fs.readFileSync(DB_FILE, 'utf-8');
-        this.cache = JSON.parse(raw);
-        if (this.cache) {
-          if (!Array.isArray(this.cache.notifications)) {
-            this.cache.notifications = [];
-          }
-          let touched = false;
-
-          const RH_EMAIL = 'aysla.mendes@querostone.com.br';
-          const hasAysla = this.cache.recipients.some(
-            (r) => r.email.toLowerCase() === RH_EMAIL || r.email.toLowerCase() === 'aysla.mendes@querostone.com'
-          );
-          if (!hasAysla) {
-            this.cache.recipients.unshift({
-              id: 'collab-rh-aysla',
-              full_name: 'Aysla Mendes',
-              email: RH_EMAIL,
-              operation: 'Stone SCL',
-              role: 'Recursos Humanos / Gente e Gestão',
-              active: true,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            });
-            touched = true;
-          }
-
-          this.cache.recipients.forEach((r) => {
-            if (!r.email) {
-              r.email = generateEmailFromName(r.full_name);
-              touched = true;
-            } else {
-              const norm = normalizeEmail(r.email);
-              if (norm !== r.email) {
-                r.email = norm;
-                touched = true;
-              }
-            }
-          });
-          if (touched) {
-            this.writeLocalSync(this.cache);
-          }
-          return this.cache;
-        }
-      }
-    } catch (err) {
-      console.error('Error reading local db file:', err);
-    }
-    const initial: DatabaseSchema = {
-      recipients: [
-        {
-          id: 'collab-rh-aysla',
-          full_name: 'Aysla Mendes',
-          email: 'aysla.mendes@querostone.com.br',
-          operation: 'Stone SCL',
-          role: 'Recursos Humanos / Gente e Gestão',
-          active: true,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-      ],
-      messages: [],
-      notifications: [],
-    };
-    this.writeLocalSync(initial);
-    this.cache = initial;
-    return initial;
-  }
-
-  private writeLocalSync(data: DatabaseSchema) {
-    this.cache = data;
-    try {
-      if (fs.existsSync(DATA_DIR)) {
-        const tempPath = `${DB_FILE}.tmp.${Date.now()}`;
-        fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
-        fs.renameSync(tempPath, DB_FILE);
-      }
-    } catch (err) {
-      // In serverless read-only contexts, memory cache holds the temporary state
-    }
-  }
-
   // ==================== COLLABORATOR / RECIPIENT OPERATIONS ====================
 
   public async getPublicRecipients(excludeId?: string): Promise<PublicRecipient[]> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const snap = await firestore.collection('recipients').where('active', '==', true).get();
-      return snap.docs
-        .map((d) => d.data() as Collaborator)
-        .filter((r) => !excludeId || r.id !== excludeId)
-        .sort((a, b) => a.full_name.localeCompare(b.full_name, 'pt-BR'))
-        .map((r) => ({
-          id: r.id,
-          full_name: r.full_name,
-          email: r.email,
-          operation: r.operation,
-          role: r.role,
-        }));
-    }
-
-    const db = this.readLocalSync();
-    return db.recipients
-      .filter((r) => r.active && (!excludeId || r.id !== excludeId))
+    const snap = await firestore.collection('recipients').where('active', '==', true).get();
+    return snap.docs
+      .map((d) => d.data() as Collaborator)
+      .filter((r) => !excludeId || r.id !== excludeId)
       .sort((a, b) => a.full_name.localeCompare(b.full_name, 'pt-BR'))
       .map((r) => ({
         id: r.id,
@@ -497,27 +369,25 @@ class DBManager {
 
   public async getAllRecipients(): Promise<Collaborator[]> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const snap = await firestore.collection('recipients').get();
-      return snap.docs
+    const snap = await firestore.collection('recipients').get();
+    const list = snap.docs.map((d) => d.data() as Collaborator);
+
+    if (list.length === 0) {
+      await ensureFirestoreDefaults(firestore);
+      const reSnap = await firestore.collection('recipients').get();
+      return reSnap.docs
         .map((d) => d.data() as Collaborator)
         .sort((a, b) => a.full_name.localeCompare(b.full_name, 'pt-BR'));
     }
 
-    const db = this.readLocalSync();
-    return [...db.recipients].sort((a, b) => a.full_name.localeCompare(b.full_name, 'pt-BR'));
+    return list.sort((a, b) => a.full_name.localeCompare(b.full_name, 'pt-BR'));
   }
 
   public async getRecipientById(id: string): Promise<Collaborator | undefined> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const doc = await firestore.collection('recipients').doc(id).get();
-      if (!doc.exists) return undefined;
-      return doc.data() as Collaborator;
-    }
-
-    const db = this.readLocalSync();
-    return db.recipients.find((r) => r.id === id);
+    const doc = await firestore.collection('recipients').doc(id).get();
+    if (!doc.exists) return undefined;
+    return doc.data() as Collaborator;
   }
 
   public async findCollaboratorById(id: string): Promise<Collaborator | undefined> {
@@ -527,15 +397,14 @@ class DBManager {
   public async findCollaboratorByEmail(email: string): Promise<Collaborator | undefined> {
     const normalized = normalizeEmail(email);
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const snap = await firestore.collection('recipients').get();
-      return snap.docs
-        .map((d) => d.data() as Collaborator)
-        .find((r) => normalizeEmail(r.email) === normalized);
+    const querySnap = await firestore.collection('recipients').where('email', '==', normalized).limit(1).get();
+    if (!querySnap.empty) {
+      return querySnap.docs[0].data() as Collaborator;
     }
-
-    const db = this.readLocalSync();
-    return db.recipients.find((r) => normalizeEmail(r.email) === normalized);
+    const snap = await firestore.collection('recipients').get();
+    return snap.docs
+      .map((d) => d.data() as Collaborator)
+      .find((r) => normalizeEmail(r.email) === normalized);
   }
 
   public async addRecipient(data: {
@@ -562,72 +431,36 @@ class DBManager {
     };
 
     const firestore = getFirestoreDb();
-    if (firestore) {
-      await firestore.collection('recipients').doc(newRecipient.id).set(cleanForFirestore(newRecipient));
-      return newRecipient;
-    }
-
-    const db = this.readLocalSync();
-    db.recipients.push(newRecipient);
-    this.writeLocalSync(db);
+    await firestore.collection('recipients').doc(newRecipient.id).set(cleanForFirestore(newRecipient));
     return newRecipient;
   }
 
   public async updateRecipient(id: string, updates: Partial<Collaborator>): Promise<Collaborator | null> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const docRef = firestore.collection('recipients').doc(id);
-      const doc = await docRef.get();
-      if (!doc.exists) return null;
-      const current = doc.data() as Collaborator;
-      const updatedEmail = updates.email ? normalizeEmail(updates.email) : current.email;
-      const updated: Collaborator = {
-        ...current,
-        ...updates,
-        email: updatedEmail,
-        id,
-        updated_at: new Date().toISOString(),
-      };
-      await docRef.set(cleanForFirestore(updated));
-      return updated;
-    }
+    const docRef = firestore.collection('recipients').doc(id);
+    const doc = await docRef.get();
+    if (!doc.exists) return null;
 
-    const db = this.readLocalSync();
-    const idx = db.recipients.findIndex((r) => r.id === id);
-    if (idx === -1) return null;
-
-    const current = db.recipients[idx];
+    const current = doc.data() as Collaborator;
     const updatedEmail = updates.email ? normalizeEmail(updates.email) : current.email;
-
-    db.recipients[idx] = {
+    const updated: Collaborator = {
       ...current,
       ...updates,
       email: updatedEmail,
       id,
       updated_at: new Date().toISOString(),
     };
-    this.writeLocalSync(db);
-    return db.recipients[idx];
+    await docRef.set(cleanForFirestore(updated));
+    return updated;
   }
 
   public async deleteRecipient(id: string): Promise<boolean> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const docRef = firestore.collection('recipients').doc(id);
-      const doc = await docRef.get();
-      if (!doc.exists) return false;
-      await docRef.delete();
-      return true;
-    }
-
-    const db = this.readLocalSync();
-    const prevLen = db.recipients.length;
-    db.recipients = db.recipients.filter((r) => r.id !== id);
-    if (db.recipients.length !== prevLen) {
-      this.writeLocalSync(db);
-      return true;
-    }
-    return false;
+    const docRef = firestore.collection('recipients').doc(id);
+    const doc = await docRef.get();
+    if (!doc.exists) return false;
+    await docRef.delete();
+    return true;
   }
 
   public async importRecipientsFromCSV(csvContent: string): Promise<{ added: number; errors: string[] }> {
@@ -696,20 +529,13 @@ class DBManager {
 
     if (newRecipients.length > 0) {
       const firestore = getFirestoreDb();
-      if (firestore) {
-        // Firestore batches support up to 500 operations
-        for (let i = 0; i < newRecipients.length; i += 400) {
-          const chunk = newRecipients.slice(i, i + 400);
-          const batch = firestore.batch();
-          for (const rec of chunk) {
-            batch.set(firestore.collection('recipients').doc(rec.id), cleanForFirestore(rec));
-          }
-          await batch.commit();
+      for (let i = 0; i < newRecipients.length; i += 400) {
+        const chunk = newRecipients.slice(i, i + 400);
+        const batch = firestore.batch();
+        for (const rec of chunk) {
+          batch.set(firestore.collection('recipients').doc(rec.id), cleanForFirestore(rec));
         }
-      } else {
-        const db = this.readLocalSync();
-        db.recipients.push(...newRecipients);
-        this.writeLocalSync(db);
+        await batch.commit();
       }
     }
 
@@ -778,19 +604,13 @@ class DBManager {
 
     if (toInsert.length > 0) {
       const firestore = getFirestoreDb();
-      if (firestore) {
-        for (let i = 0; i < toInsert.length; i += 400) {
-          const chunk = toInsert.slice(i, i + 400);
-          const batch = firestore.batch();
-          for (const rec of chunk) {
-            batch.set(firestore.collection('recipients').doc(rec.id), cleanForFirestore(rec));
-          }
-          await batch.commit();
+      for (let i = 0; i < toInsert.length; i += 400) {
+        const chunk = toInsert.slice(i, i + 400);
+        const batch = firestore.batch();
+        for (const rec of chunk) {
+          batch.set(firestore.collection('recipients').doc(rec.id), cleanForFirestore(rec));
         }
-      } else {
-        const db = this.readLocalSync();
-        db.recipients.push(...toInsert);
-        this.writeLocalSync(db);
+        await batch.commit();
       }
     }
 
@@ -801,36 +621,14 @@ class DBManager {
 
   public async getCollaboratorInbox(collaboratorId: string): Promise<InboxMessage[]> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const snap = await firestore
-        .collection('messages')
-        .where('recipient_id', '==', collaboratorId)
-        .get();
+    const snap = await firestore
+      .collection('messages')
+      .where('recipient_id', '==', collaboratorId)
+      .get();
 
-      return snap.docs
-        .map((d) => d.data() as Message)
-        .filter((m) => !m.deleted_by_recipient)
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        .map((m) => ({
-          id: m.id,
-          category: m.category,
-          message: m.message,
-          reaction: m.reaction,
-          color_theme: m.color_theme,
-          gif_url: m.gif_url,
-          recipient_reaction: m.recipient_reaction,
-          thank_you_note: m.thank_you_note,
-          thank_you_at: m.thank_you_at,
-          created_at: m.created_at,
-          read_at: m.read_at,
-          archived_at: m.archived_at,
-          status: m.status,
-        }));
-    }
-
-    const db = this.readLocalSync();
-    return db.messages
-      .filter((m) => m.recipient_id === collaboratorId && !m.deleted_by_recipient)
+    return snap.docs
+      .map((d) => d.data() as Message)
+      .filter((m) => !m.deleted_by_recipient)
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .map((m) => ({
         id: m.id,
@@ -851,24 +649,14 @@ class DBManager {
 
   public async reactToMessage(collaboratorId: string, messageId: string, reaction: string): Promise<boolean> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const docRef = firestore.collection('messages').doc(messageId);
-      const doc = await docRef.get();
-      if (!doc.exists) return false;
-      const msg = doc.data() as Message;
-      if (msg.recipient_id !== collaboratorId) return false;
+    const docRef = firestore.collection('messages').doc(messageId);
+    const doc = await docRef.get();
+    if (!doc.exists) return false;
+    const msg = doc.data() as Message;
+    if (msg.recipient_id !== collaboratorId) return false;
 
-      const newReaction = msg.recipient_reaction === reaction ? null : reaction;
-      await docRef.update({ recipient_reaction: newReaction });
-      return true;
-    }
-
-    const db = this.readLocalSync();
-    const msg = db.messages.find((m) => m.id === messageId && m.recipient_id === collaboratorId);
-    if (!msg) return false;
-
-    msg.recipient_reaction = msg.recipient_reaction === reaction ? null : reaction;
-    this.writeLocalSync(db);
+    const newReaction = msg.recipient_reaction === reaction ? null : reaction;
+    await docRef.update({ recipient_reaction: newReaction });
     return true;
   }
 
@@ -881,46 +669,21 @@ class DBManager {
     const now = new Date().toISOString();
 
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const docRef = firestore.collection('messages').doc(messageId);
-      const doc = await docRef.get();
-      if (!doc.exists) throw new Error('Mensagem não encontrada.');
-      const msg = doc.data() as Message;
-      if (msg.recipient_id !== collaboratorId) throw new Error('Mensagem não encontrada.');
+    const docRef = firestore.collection('messages').doc(messageId);
+    const doc = await docRef.get();
+    if (!doc.exists) throw new Error('Mensagem não encontrada.');
+    const msg = doc.data() as Message;
+    if (msg.recipient_id !== collaboratorId) throw new Error('Mensagem não encontrada.');
 
-      await docRef.update({
-        thank_you_note: cleanNote,
-        thank_you_at: now,
-      });
-
-      if (msg.sender_id && msg.sender_id !== collaboratorId) {
-        const notifId = `notif-${Date.now()}-${crypto.randomUUID().slice(0, 4)}`;
-        await firestore.collection('notifications').doc(notifId).set({
-          id: notifId,
-          collaborator_id: msg.sender_id,
-          message_id: msg.id,
-          text: `💛 Seu recado foi lido e o colega enviou um agradecimento: "${cleanNote}"`,
-          read_at: null,
-          created_at: now,
-        });
-      }
-
-      return { success: true, thank_you_note: cleanNote };
-    }
-
-    const db = this.readLocalSync();
-    const msg = db.messages.find((m) => m.id === messageId && m.recipient_id === collaboratorId);
-    if (!msg) throw new Error('Mensagem não encontrada.');
-
-    msg.thank_you_note = cleanNote;
-    msg.thank_you_at = now;
+    await docRef.update({
+      thank_you_note: cleanNote,
+      thank_you_at: now,
+    });
 
     if (msg.sender_id && msg.sender_id !== collaboratorId) {
-      if (!Array.isArray(db.notifications)) {
-        db.notifications = [];
-      }
-      db.notifications.unshift({
-        id: `notif-${Date.now()}-${crypto.randomUUID().slice(0, 4)}`,
+      const notifId = `notif-${Date.now()}-${crypto.randomUUID().slice(0, 4)}`;
+      await firestore.collection('notifications').doc(notifId).set({
+        id: notifId,
         collaborator_id: msg.sender_id,
         message_id: msg.id,
         text: `💛 Seu recado foi lido e o colega enviou um agradecimento: "${cleanNote}"`,
@@ -929,31 +692,20 @@ class DBManager {
       });
     }
 
-    this.writeLocalSync(db);
     return { success: true, thank_you_note: cleanNote };
   }
 
   public async getCollaboratorSummary(collaboratorId: string): Promise<{ totalMessages: number; unreadMessages: number }> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const snap = await firestore
-        .collection('messages')
-        .where('recipient_id', '==', collaboratorId)
-        .get();
+    const snap = await firestore
+      .collection('messages')
+      .where('recipient_id', '==', collaboratorId)
+      .get();
 
-      const userMessages = snap.docs
-        .map((d) => d.data() as Message)
-        .filter((m) => !m.deleted_by_recipient);
+    const userMessages = snap.docs
+      .map((d) => d.data() as Message)
+      .filter((m) => !m.deleted_by_recipient);
 
-      const totalMessages = userMessages.length;
-      const unreadMessages = userMessages.filter((m) => !m.read_at).length;
-      return { totalMessages, unreadMessages };
-    }
-
-    const db = this.readLocalSync();
-    const userMessages = db.messages.filter(
-      (m) => m.recipient_id === collaboratorId && !m.deleted_by_recipient
-    );
     const totalMessages = userMessages.length;
     const unreadMessages = userMessages.filter((m) => !m.read_at).length;
     return { totalMessages, unreadMessages };
@@ -961,114 +713,68 @@ class DBManager {
 
   public async markMessageRead(collaboratorId: string, messageId: string, isRead: boolean): Promise<boolean> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const docRef = firestore.collection('messages').doc(messageId);
-      const doc = await docRef.get();
-      if (!doc.exists) return false;
-      const msg = doc.data() as Message;
-      if (msg.recipient_id !== collaboratorId) return false;
+    const docRef = firestore.collection('messages').doc(messageId);
+    const doc = await docRef.get();
+    if (!doc.exists) return false;
+    const msg = doc.data() as Message;
+    if (msg.recipient_id !== collaboratorId) return false;
 
-      const updates: any = {
-        read_at: isRead ? (msg.read_at || new Date().toISOString()) : null,
-      };
-      if (isRead && msg.status === 'pending') {
-        updates.status = 'delivered';
-      }
-      await docRef.update(updates);
-      return true;
-    }
-
-    const db = this.readLocalSync();
-    const msg = db.messages.find((m) => m.id === messageId && m.recipient_id === collaboratorId);
-    if (!msg) return false;
-
-    msg.read_at = isRead ? (msg.read_at || new Date().toISOString()) : null;
+    const updates: any = {
+      read_at: isRead ? (msg.read_at || new Date().toISOString()) : null,
+    };
     if (isRead && msg.status === 'pending') {
-      msg.status = 'delivered';
+      updates.status = 'delivered';
     }
-    this.writeLocalSync(db);
+    await docRef.update(updates);
     return true;
   }
 
   public async archiveMessageForRecipient(collaboratorId: string, messageId: string): Promise<boolean> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const docRef = firestore.collection('messages').doc(messageId);
-      const doc = await docRef.get();
-      if (!doc.exists) return false;
-      const msg = doc.data() as Message;
-      if (msg.recipient_id !== collaboratorId) return false;
+    const docRef = firestore.collection('messages').doc(messageId);
+    const doc = await docRef.get();
+    if (!doc.exists) return false;
+    const msg = doc.data() as Message;
+    if (msg.recipient_id !== collaboratorId) return false;
 
-      await docRef.update({
-        deleted_by_recipient: true,
-        archived_at: new Date().toISOString(),
-      });
-      return true;
-    }
-
-    const db = this.readLocalSync();
-    const msg = db.messages.find((m) => m.id === messageId && m.recipient_id === collaboratorId);
-    if (!msg) return false;
-
-    msg.deleted_by_recipient = true;
-    msg.archived_at = new Date().toISOString();
-    this.writeLocalSync(db);
+    await docRef.update({
+      deleted_by_recipient: true,
+      archived_at: new Date().toISOString(),
+    });
     return true;
   }
 
   public async getNotifications(collaboratorId: string): Promise<InAppNotification[]> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const snap = await firestore
-        .collection('notifications')
-        .where('collaborator_id', '==', collaboratorId)
-        .get();
+    const snap = await firestore
+      .collection('notifications')
+      .where('collaborator_id', '==', collaboratorId)
+      .get();
 
-      return snap.docs
-        .map((d) => d.data() as InAppNotification)
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    }
-
-    const db = this.readLocalSync();
-    return (db.notifications || [])
-      .filter((n) => n.collaborator_id === collaboratorId)
+    return snap.docs
+      .map((d) => d.data() as InAppNotification)
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 
   public async markNotificationsRead(collaboratorId: string): Promise<void> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const snap = await firestore
-        .collection('notifications')
-        .where('collaborator_id', '==', collaboratorId)
-        .get();
+    const snap = await firestore
+      .collection('notifications')
+      .where('collaborator_id', '==', collaboratorId)
+      .get();
 
-      const batch = firestore.batch();
-      const now = new Date().toISOString();
-      let count = 0;
-      snap.docs.forEach((d) => {
-        const notif = d.data() as InAppNotification;
-        if (!notif.read_at) {
-          batch.update(d.ref, { read_at: now });
-          count++;
-        }
-      });
-      if (count > 0) {
-        await batch.commit();
-      }
-      return;
-    }
-
-    const db = this.readLocalSync();
-    let touched = false;
-    (db.notifications || []).forEach((n) => {
-      if (n.collaborator_id === collaboratorId && !n.read_at) {
-        n.read_at = new Date().toISOString();
-        touched = true;
+    const batch = firestore.batch();
+    const now = new Date().toISOString();
+    let count = 0;
+    snap.docs.forEach((d) => {
+      const notif = d.data() as InAppNotification;
+      if (!notif.read_at) {
+        batch.update(d.ref, { read_at: now });
+        count++;
       }
     });
-    if (touched) {
-      this.writeLocalSync(db);
+    if (count > 0) {
+      await batch.commit();
     }
   }
 
@@ -1123,30 +829,11 @@ class DBManager {
     };
 
     const firestore = getFirestoreDb();
-    if (firestore) {
-      await firestore.collection('messages').doc(newMessage.id).set(cleanForFirestore(newMessage));
+    await firestore.collection('messages').doc(newMessage.id).set(cleanForFirestore(newMessage));
 
-      const notifId = `notif-${Date.now()}-${crypto.randomUUID().slice(0, 4)}`;
-      await firestore.collection('notifications').doc(notifId).set({
-        id: notifId,
-        collaborator_id: recipient.id,
-        message_id: newMessage.id,
-        text: 'Você recebeu uma nova mensagem no Correio Verde. 💚',
-        read_at: null,
-        created_at: new Date().toISOString(),
-      });
-
-      return newMessage;
-    }
-
-    const db = this.readLocalSync();
-    db.messages.unshift(newMessage);
-
-    if (!Array.isArray(db.notifications)) {
-      db.notifications = [];
-    }
-    db.notifications.unshift({
-      id: `notif-${Date.now()}-${crypto.randomUUID().slice(0, 4)}`,
+    const notifId = `notif-${Date.now()}-${crypto.randomUUID().slice(0, 4)}`;
+    await firestore.collection('notifications').doc(notifId).set({
+      id: notifId,
       collaborator_id: recipient.id,
       message_id: newMessage.id,
       text: 'Você recebeu uma nova mensagem no Correio Verde. 💚',
@@ -1154,7 +841,6 @@ class DBManager {
       created_at: new Date().toISOString(),
     });
 
-    this.writeLocalSync(db);
     return newMessage;
   }
 
@@ -1165,15 +851,9 @@ class DBManager {
     status?: string;
     search?: string;
   }): Promise<Message[]> {
-    let list: Message[] = [];
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const snap = await firestore.collection('messages').get();
-      list = snap.docs.map((d) => d.data() as Message);
-    } else {
-      const db = this.readLocalSync();
-      list = [...db.messages];
-    }
+    const snap = await firestore.collection('messages').get();
+    let list: Message[] = snap.docs.map((d) => d.data() as Message);
 
     if (filters?.recipient_id) {
       list = list.filter((m) => m.recipient_id === filters.recipient_id);
@@ -1203,61 +883,32 @@ class DBManager {
 
   public async updateMessageStatus(id: string, status: MessageStatus): Promise<Message | null> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const docRef = firestore.collection('messages').doc(id);
-      const doc = await docRef.get();
-      if (!doc.exists) return null;
-      await docRef.update({ status });
-      const current = doc.data() as Message;
-      current.status = status;
-      return current;
-    }
-
-    const db = this.readLocalSync();
-    const msg = db.messages.find((m) => m.id === id);
-    if (!msg) return null;
-    msg.status = status;
-    this.writeLocalSync(db);
-    return msg;
+    const docRef = firestore.collection('messages').doc(id);
+    const doc = await docRef.get();
+    if (!doc.exists) return null;
+    await docRef.update({ status });
+    const current = doc.data() as Message;
+    current.status = status;
+    return current;
   }
 
   public async deleteMessage(id: string): Promise<boolean> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const docRef = firestore.collection('messages').doc(id);
-      const doc = await docRef.get();
-      if (!doc.exists) return false;
-      await docRef.delete();
-      return true;
-    }
-
-    const db = this.readLocalSync();
-    const prev = db.messages.length;
-    db.messages = db.messages.filter((m) => m.id !== id);
-    if (db.messages.length !== prev) {
-      this.writeLocalSync(db);
-      return true;
-    }
-    return false;
+    const docRef = firestore.collection('messages').doc(id);
+    const doc = await docRef.get();
+    if (!doc.exists) return false;
+    await docRef.delete();
+    return true;
   }
 
   public async getStats(): Promise<CampaignStats> {
-    let recipients: Collaborator[] = [];
-    let messages: Message[] = [];
-
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const [rSnap, mSnap] = await Promise.all([
-        firestore.collection('recipients').get(),
-        firestore.collection('messages').get(),
-      ]);
-      recipients = rSnap.docs.map((d) => d.data() as Collaborator);
-      messages = mSnap.docs.map((d) => d.data() as Message);
-    } else {
-      const db = this.readLocalSync();
-      recipients = db.recipients;
-      messages = db.messages;
-    }
+    const [rSnap, mSnap] = await Promise.all([
+      firestore.collection('recipients').get(),
+      firestore.collection('messages').get(),
+    ]);
+    const recipients: Collaborator[] = rSnap.docs.map((d) => d.data() as Collaborator);
+    const messages: Message[] = mSnap.docs.map((d) => d.data() as Message);
 
     const operationsSet = new Set<string>();
     const byOperation: Record<string, { recipients: number; messages: number }> = {};
@@ -1309,15 +960,9 @@ class DBManager {
   }
 
   public async exportMessagesCSV(): Promise<string> {
-    let messages: Message[] = [];
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const snap = await firestore.collection('messages').get();
-      messages = snap.docs.map((d) => d.data() as Message);
-    } else {
-      const db = this.readLocalSync();
-      messages = db.messages;
-    }
+    const snap = await firestore.collection('messages').get();
+    const messages = snap.docs.map((d) => d.data() as Message);
 
     const headers = [
       'ID',
@@ -1353,62 +998,32 @@ class DBManager {
 
   public async clearAllData(): Promise<void> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const collections = ['recipients', 'messages', 'notifications'];
-      for (const col of collections) {
-        const snap = await firestore.collection(col).get();
-        const batch = firestore.batch();
-        snap.docs.forEach((d) => batch.delete(d.ref));
-        await batch.commit();
-      }
-      return;
+    const collections = ['recipients', 'messages', 'notifications'];
+    for (const col of collections) {
+      const snap = await firestore.collection(col).get();
+      const batch = firestore.batch();
+      snap.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
     }
-
-    this.writeLocalSync({
-      recipients: [],
-      messages: [],
-      notifications: [],
-    });
   }
 
   public async clearMessages(): Promise<void> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const collections = ['messages', 'notifications'];
-      for (const col of collections) {
-        const snap = await firestore.collection(col).get();
-        const batch = firestore.batch();
-        snap.docs.forEach((d) => batch.delete(d.ref));
-        await batch.commit();
-      }
-      return;
+    const collections = ['messages', 'notifications'];
+    for (const col of collections) {
+      const snap = await firestore.collection(col).get();
+      const batch = firestore.batch();
+      snap.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
     }
-
-    const db = this.readLocalSync();
-    this.writeLocalSync({
-      ...db,
-      messages: [],
-      notifications: [],
-    });
   }
 
   public async clearRecipients(): Promise<void> {
     const firestore = getFirestoreDb();
-    if (firestore) {
-      const snap = await firestore.collection('recipients').get();
-      const batch = firestore.batch();
-      snap.docs.forEach((d) => batch.delete(d.ref));
-      await batch.commit();
-      return;
-    }
-
-    const db = this.readLocalSync();
-    this.writeLocalSync({
-      ...db,
-      recipients: [],
-      messages: [],
-      notifications: [],
-    });
+    const snap = await firestore.collection('recipients').get();
+    const batch = firestore.batch();
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
   }
 }
 
