@@ -66,17 +66,28 @@ let firestoreChecked = false;
 
 export function formatPrivateKey(rawKey: string): string {
   let key = rawKey.trim();
+
+  // If the user pasted the entire service account JSON into the private key field
+  if (key.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(key);
+      if (parsed.private_key) {
+        key = String(parsed.private_key).trim();
+      }
+    } catch {}
+  }
+
   // Strip surrounding quotes if present
   if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
     key = key.slice(1, -1);
   }
 
-  // Handle base64 encoded private key if someone set it as base64 in environment variables
-  if (!key.includes('-----BEGIN') && key.length > 80) {
+  // Handle base64 encoded private key
+  if (!key.includes('-----BEGIN') && key.length > 200) {
     try {
       const decoded = Buffer.from(key, 'base64').toString('utf8');
-      if (decoded.includes('-----BEGIN')) {
-        key = decoded;
+      if (decoded.includes('-----BEGIN') || decoded.trim().startsWith('{')) {
+        return formatPrivateKey(decoded);
       }
     } catch {}
   }
@@ -84,14 +95,44 @@ export function formatPrivateKey(rawKey: string): string {
   // Replace literal '\n' characters with actual newlines, and remove carriage returns '\r'
   key = key.replace(/\\n/g, '\n').replace(/\r/g, '').trim();
 
-  // If the PEM header exists on one line with spaces instead of newlines
-  if (key.includes('-----BEGIN PRIVATE KEY-----') && !key.includes('\n')) {
-    key = key
-      .replace('-----BEGIN PRIVATE KEY-----', '-----BEGIN PRIVATE KEY-----\n')
-      .replace('-----END PRIVATE KEY-----', '\n-----END PRIVATE KEY-----');
+  // If newlines were converted to spaces or if PEM lines need reconstruction
+  if (key.includes('BEGIN') && key.includes('END')) {
+    const match = key.match(/-----\s*BEGIN [A-Z ]+-----(.*?)-----\s*END [A-Z ]+-----/s);
+    if (match) {
+      const headerMatch = key.match(/(-----\s*BEGIN [A-Z ]+-----)/);
+      const footerMatch = key.match(/(-----\s*END [A-Z ]+-----)/);
+      const header = headerMatch ? headerMatch[1].replace(/\s+/g, ' ') : '-----BEGIN PRIVATE KEY-----';
+      const footer = footerMatch ? footerMatch[1].replace(/\s+/g, ' ') : '-----END PRIVATE KEY-----';
+      const cleanBody = match[1].replace(/\s+/g, '');
+      const chunks = cleanBody.match(/.{1,64}/g) || [];
+      return `${header}\n${chunks.join('\n')}\n${footer}\n`;
+    }
+  }
+
+  // If missing PEM headers but contains base64 key data (e.g. MIIEv...)
+  if (!key.includes('BEGIN')) {
+    // If started with 'nMII...' due to a sliced '\n'
+    if (key.startsWith('nMII')) {
+      key = key.slice(1);
+    }
+    const cleanBody = key.replace(/\s+/g, '');
+    if (cleanBody.length > 200) {
+      const chunks = cleanBody.match(/.{1,64}/g) || [];
+      return `-----BEGIN PRIVATE KEY-----\n${chunks.join('\n')}\n-----END PRIVATE KEY-----\n`;
+    }
   }
 
   return key;
+}
+
+export function isValidPrivateKey(key: string): boolean {
+  if (!key || key.length < 100) return false;
+  try {
+    crypto.createPrivateKey(key);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function getFirestoreDb(): Firestore | null {
@@ -100,18 +141,28 @@ export function getFirestoreDb(): Firestore | null {
 
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+  const rawPrivateKey = process.env.FIREBASE_PRIVATE_KEY;
 
-  if (projectId && clientEmail && privateKey) {
+  if (projectId && clientEmail && rawPrivateKey) {
     try {
-      privateKey = formatPrivateKey(privateKey);
+      const formattedKey = formatPrivateKey(rawPrivateKey);
+
+      if (!isValidPrivateKey(formattedKey)) {
+        console.warn(
+          `[Firebase Firestore] A chave privada fornecida em FIREBASE_PRIVATE_KEY é inválida ou está incompleta (tamanho: ${rawPrivateKey.length} caracteres). ` +
+            `O sistema funcionará normalmente com persistência local em data/correio_verde.json. ` +
+            `Para ativar o Firestore, verifique se a chave RSA completa (com ~1700 caracteres) foi configurada.`
+        );
+        firestoreInstance = null;
+        return null;
+      }
 
       if (!getApps().length) {
         initializeApp({
           credential: cert({
             projectId,
             clientEmail,
-            privateKey,
+            privateKey: formattedKey,
           }),
         });
       }
@@ -120,10 +171,10 @@ export function getFirestoreDb(): Firestore | null {
 
       // Ensure Aysla Mendes (RH Admin) is created in Firestore if not already present
       ensureFirestoreDefaults(firestoreInstance).catch((err) => {
-        console.error('[Firebase Firestore] Erro ao sincronizar administrador inicial:', err);
+        console.warn('[Firebase Firestore] Aviso ao sincronizar administrador inicial:', err?.message || err);
       });
-    } catch (err) {
-      console.error('[Firebase Firestore] Falha ao inicializar SDK Admin do Firebase:', err);
+    } catch (err: any) {
+      console.warn('[Firebase Firestore] Aviso ao inicializar SDK Admin do Firebase:', err?.message || err);
       firestoreInstance = null;
     }
   } else {
