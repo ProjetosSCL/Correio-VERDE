@@ -1,3 +1,4 @@
-export * from '../api/db';
-import { dbManager } from '../api/db';
+export * from '../api/index.js';
+import { dbManager } from '../api/index.js';
 export default dbManager;
+
