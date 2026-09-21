@@ -32,6 +32,7 @@ interface InboxScreenProps {
   isLoading?: boolean;
   onBack?: () => void;
   onBackToHome?: () => void;
+  onNavigateToSent?: () => void;
   onNavigateToSend?: () => void;
   onSendReply?: (recipientId: string) => void;
   onToggleRead?: (messageId: string, currentReadStatus: boolean) => Promise<void>;
@@ -45,6 +46,7 @@ export const InboxScreen: React.FC<InboxScreenProps> = ({
   isLoading: propIsLoading,
   onBack,
   onBackToHome,
+  onNavigateToSent,
   onNavigateToSend,
   onSendReply,
   onToggleRead,
@@ -293,7 +295,7 @@ export const InboxScreen: React.FC<InboxScreenProps> = ({
   return (
     <div className="py-6 sm:py-10 max-w-3xl mx-auto space-y-6">
       {/* Header with Navigation */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <button
           onClick={onBack || onBackToHome}
           className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-800 hover:text-emerald-950 px-3.5 py-2 rounded-xl bg-white hover:bg-emerald-50 border border-emerald-300 transition-all cursor-pointer shadow-xs"
@@ -302,13 +304,26 @@ export const InboxScreen: React.FC<InboxScreenProps> = ({
           <span>Voltar ao início</span>
         </button>
 
-        <button
-          onClick={onNavigateToSend || (() => onSendReply?.(''))}
-          className="inline-flex items-center gap-1.5 text-xs font-bold text-white bg-[#00A868] hover:bg-[#008F58] px-4 py-2 rounded-xl transition-all shadow-md shadow-emerald-600/20 cursor-pointer active:scale-[0.98]"
-        >
-          <Send className="w-3.5 h-3.5" />
-          <span>Enviar mensagem</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {onNavigateToSent && (
+            <button
+              onClick={onNavigateToSent}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800 hover:text-emerald-950 px-3.5 py-2 rounded-xl bg-white hover:bg-emerald-50 border border-emerald-300 transition-all cursor-pointer shadow-xs"
+            >
+              <Send className="w-3.5 h-3.5 text-[#00A868]" />
+              <span className="hidden sm:inline">Mensagens enviadas</span>
+              <span className="sm:hidden">Enviadas</span>
+            </button>
+          )}
+
+          <button
+            onClick={onNavigateToSend || (() => onSendReply?.(''))}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-white bg-[#00A868] hover:bg-[#008F58] px-4 py-2 rounded-xl transition-all shadow-md shadow-emerald-600/20 cursor-pointer active:scale-[0.98]"
+          >
+            <Send className="w-3.5 h-3.5" />
+            <span>Enviar mensagem</span>
+          </button>
+        </div>
       </div>
 
       {/* Title Section with Yellow Ribbon */}

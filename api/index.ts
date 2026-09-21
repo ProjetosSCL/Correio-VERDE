@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+dotenv.config();
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
 
@@ -77,6 +78,23 @@ export interface InboxMessage {
   created_at: string;
   read_at?: string | null;
   archived_at?: string | null;
+  status: MessageStatus;
+}
+
+export interface SentMessage {
+  id: string;
+  recipient_name: string;
+  recipient_role?: string;
+  operation: string;
+  category?: string;
+  message: string;
+  reaction?: string;
+  color_theme?: string;
+  gif_url?: string;
+  recipient_reaction?: string | null;
+  thank_you_note?: string | null;
+  thank_you_at?: string | null;
+  created_at: string;
   status: MessageStatus;
 }
 
@@ -287,7 +305,7 @@ export function getFirestoreDb(): Firestore {
 
   const formattedKey = formatPrivateKey(rawPrivateKey);
 
-  if (clientEmail && formattedKey && formattedKey.length > 200) {
+  if (clientEmail && formattedKey) {
     try {
       initializeApp({
         credential: cert({
@@ -304,23 +322,31 @@ export function getFirestoreDb(): Firestore {
       return firestoreInstance;
     } catch (err: any) {
       console.error('[Firebase Firestore] Erro ao inicializar SDK com cert():', err?.message || err);
+      throw new Error(`Falha ao inicializar SDK do Firebase com cert(): ${err?.message || err}`);
     }
   }
 
-  try {
-    initializeApp({
-      projectId,
-    });
-    firestoreInstance = getFirestore();
-    console.log(`[Firebase Firestore] SDK Admin inicializado com credenciais padrão para projeto: ${projectId}`);
-    ensureFirestoreDefaults(firestoreInstance).catch((err) => {
-      console.warn('[Firebase Firestore] Aviso ao sincronizar administrador inicial:', err?.message || err);
-    });
-    return firestoreInstance;
-  } catch (err: any) {
-    console.error('[Firebase Firestore] Falha crítica ao inicializar SDK Admin do Firebase:', err?.message || err);
-    throw new Error(`Falha ao conectar ao Firestore no projeto "${projectId}": ${err?.message || err}`);
+  // Only use GCP default credentials if running in GCP Cloud Run environment where ADC is available
+  if (process.env.K_SERVICE || process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    try {
+      initializeApp({
+        projectId,
+      });
+      firestoreInstance = getFirestore();
+      console.log(`[Firebase Firestore] SDK Admin inicializado com credenciais padrão GCP para projeto: ${projectId}`);
+      ensureFirestoreDefaults(firestoreInstance).catch((err) => {
+        console.warn('[Firebase Firestore] Aviso ao sincronizar administrador inicial:', err?.message || err);
+      });
+      return firestoreInstance;
+    } catch (err: any) {
+      console.error('[Firebase Firestore] Falha crítica ao inicializar SDK Admin do Firebase no GCP:', err?.message || err);
+      throw new Error(`Falha ao conectar ao Firestore no projeto "${projectId}": ${err?.message || err}`);
+    }
   }
+
+  throw new Error(
+    `[Firebase Firestore] Credenciais do Firebase incompletas. Certifique-se de preencher FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL e FIREBASE_PRIVATE_KEY nas variáveis de ambiente da Vercel.`
+  );
 }
 
 async function ensureFirestoreDefaults(db: Firestore): Promise<void> {
@@ -695,7 +721,35 @@ class DBManager {
     return { success: true, thank_you_note: cleanNote };
   }
 
-  public async getCollaboratorSummary(collaboratorId: string): Promise<{ totalMessages: number; unreadMessages: number }> {
+  public async getSentMessages(collaboratorId: string): Promise<SentMessage[]> {
+    const firestore = getFirestoreDb();
+    const snap = await firestore
+      .collection('messages')
+      .where('sender_id', '==', collaboratorId)
+      .get();
+
+    return snap.docs
+      .map((d) => d.data() as Message)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .map((m) => ({
+        id: m.id,
+        recipient_name: m.recipient_name,
+        recipient_role: m.recipient_role,
+        operation: m.operation,
+        category: m.category,
+        message: m.message,
+        reaction: m.reaction,
+        color_theme: m.color_theme,
+        gif_url: m.gif_url,
+        recipient_reaction: m.recipient_reaction,
+        thank_you_note: m.thank_you_note,
+        thank_you_at: m.thank_you_at,
+        created_at: m.created_at,
+        status: m.status,
+      }));
+  }
+
+  public async getCollaboratorSummary(collaboratorId: string): Promise<{ totalMessages: number; unreadMessages: number; sentMessages: number }> {
     const firestore = getFirestoreDb();
     const snap = await firestore
       .collection('messages')
@@ -708,7 +762,14 @@ class DBManager {
 
     const totalMessages = userMessages.length;
     const unreadMessages = userMessages.filter((m) => !m.read_at).length;
-    return { totalMessages, unreadMessages };
+
+    const sentSnap = await firestore
+      .collection('messages')
+      .where('sender_id', '==', collaboratorId)
+      .get();
+    const sentMessages = sentSnap.size;
+
+    return { totalMessages, unreadMessages, sentMessages };
   }
 
   public async markMessageRead(collaboratorId: string, messageId: string, isRead: boolean): Promise<boolean> {
@@ -1032,9 +1093,6 @@ export const dbManager = new DBManager();
 
 // ==================== EXPRESS SERVER & API ROUTES ====================
 
-
-dotenv.config();
-
 const app = express();
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'correio2026';
@@ -1281,6 +1339,18 @@ app.get(['/api/collaborator/inbox', '/collaborator/inbox'], requireCollaboratorA
   } catch (err: any) {
     console.error('Error fetching collaborator inbox:', err);
     res.status(500).json({ error: 'Erro ao carregar sua caixa postal.' });
+  }
+});
+
+// Collaborator sent messages: returns messages sent by the logged collaborator with feedback
+app.get(['/api/collaborator/sent', '/collaborator/sent'], requireCollaboratorAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const col = req.collaborator!;
+    const messages = await dbManager.getSentMessages(col.id);
+    res.json({ messages });
+  } catch (err: any) {
+    console.error('Error fetching collaborator sent messages:', err);
+    res.status(500).json({ error: 'Erro ao carregar seu histórico de mensagens enviadas.' });
   }
 });
 

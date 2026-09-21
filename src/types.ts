@@ -244,6 +244,7 @@ export interface CollaboratorProfile {
   is_admin?: boolean;
   unread_count?: number;
   received_count?: number;
+  sent_count?: number;
 }
 
 export interface CollaboratorSession {
@@ -268,9 +269,27 @@ export interface InboxMessage {
   status: MessageStatus;
 }
 
+export interface SentMessage {
+  id: string;
+  recipient_name: string;
+  recipient_role?: string;
+  operation: string;
+  category?: string;
+  message: string;
+  reaction?: string;
+  color_theme?: string;
+  gif_url?: string;
+  recipient_reaction?: string | null;
+  thank_you_note?: string | null;
+  thank_you_at?: string | null;
+  created_at: string;
+  status: MessageStatus;
+}
+
 export interface CollaboratorInboxSummary {
   totalMessages: number;
   unreadMessages: number;
+  sentMessages?: number;
 }
 
 export interface InAppNotification {

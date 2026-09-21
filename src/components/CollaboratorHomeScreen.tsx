@@ -25,6 +25,7 @@ interface CollaboratorHomeScreenProps {
   onNavigateToSend?: () => void;
   onStartSendMessage?: () => void;
   onNavigateToInbox: () => void;
+  onNavigateToSent?: () => void;
   onOpenProfile: () => void;
   onDismissNotification?: () => void;
   onLogout?: () => void;
@@ -38,13 +39,14 @@ export const CollaboratorHomeScreen: React.FC<CollaboratorHomeScreenProps> = ({
   onNavigateToSend,
   onStartSendMessage,
   onNavigateToInbox,
+  onNavigateToSent,
   onOpenProfile,
   onOpenAdmin,
 }) => {
   const safeSummary: CollaboratorInboxSummary = summary || {
     totalMessages: collaborator?.received_count || 0,
     unreadMessages: collaborator?.unread_count || 0,
-    latestMessageDate: null,
+    sentMessages: collaborator?.sent_count || 0,
   };
 
   const handleSendClick = onNavigateToSend || onStartSendMessage || (() => {});
@@ -108,7 +110,7 @@ export const CollaboratorHomeScreen: React.FC<CollaboratorHomeScreenProps> = ({
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
           <div className="p-4 rounded-2xl bg-[#F8FAF7] border border-emerald-200 space-y-1 shadow-xs">
             <span className="text-xs text-emerald-700">Mensagens recebidas</span>
             <div className="flex items-baseline gap-2">
@@ -116,7 +118,7 @@ export const CollaboratorHomeScreen: React.FC<CollaboratorHomeScreenProps> = ({
                 {safeSummary.totalMessages}
               </span>
               <span className="text-xs text-emerald-600">
-                {safeSummary.totalMessages === 1 ? 'mensagem no total' : 'mensagens no total'}
+                {safeSummary.totalMessages === 1 ? 'recebida' : 'recebidas'}
               </span>
             </div>
           </div>
@@ -139,6 +141,23 @@ export const CollaboratorHomeScreen: React.FC<CollaboratorHomeScreenProps> = ({
               </span>
               <span className="text-xs text-emerald-600">
                 {safeSummary.unreadMessages === 1 ? 'não lida' : 'não lidas'}
+              </span>
+            </div>
+          </div>
+
+          <div
+            onClick={onNavigateToSent}
+            className="p-4 rounded-2xl bg-[#F8FAF7] border border-emerald-200 space-y-1 shadow-xs hover:border-[#00A868] transition-all cursor-pointer group"
+          >
+            <span className="text-xs text-emerald-700 group-hover:text-[#008F58] transition-colors">
+              Mensagens enviadas
+            </span>
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-extrabold text-[#08301D] font-['Outfit',sans-serif]">
+                {safeSummary.sentMessages ?? 0}
+              </span>
+              <span className="text-xs text-emerald-600 group-hover:underline">
+                {safeSummary.sentMessages === 1 ? 'enviada' : 'enviadas'}
               </span>
             </div>
           </div>
@@ -182,12 +201,12 @@ export const CollaboratorHomeScreen: React.FC<CollaboratorHomeScreenProps> = ({
         </div>
       )}
 
-      {/* Main Action Cards (Two primary paths: Send or View Inbox) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+      {/* Main Action Cards (Three paths: Send, Inbox, Sent History) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
         {/* Action 1: Enviar Mensagem */}
         <div
           onClick={handleSendClick}
-          className="group relative rounded-3xl bg-white border border-emerald-200/90 p-6 sm:p-7 shadow-xl shadow-emerald-950/5 hover:border-[#00A868] hover:shadow-2xl hover:shadow-emerald-600/10 transition-all cursor-pointer flex flex-col justify-between space-y-6"
+          className="group relative rounded-3xl bg-white border border-emerald-200/90 p-6 shadow-xl shadow-emerald-950/5 hover:border-[#00A868] hover:shadow-2xl hover:shadow-emerald-600/10 transition-all cursor-pointer flex flex-col justify-between space-y-5"
         >
           <div className="space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-[#00A868] group-hover:scale-105 group-hover:bg-[#00A868] group-hover:text-white transition-all shadow-xs">
@@ -205,7 +224,7 @@ export const CollaboratorHomeScreen: React.FC<CollaboratorHomeScreenProps> = ({
 
           <button
             type="button"
-            className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-bold text-white bg-[#00A868] group-hover:bg-[#008F58] transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
+            className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-[#00A868] group-hover:bg-[#008F58] transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
           >
             <span>Enviar mensagem</span>
             <ArrowRight className="w-3.5 h-3.5" />
@@ -215,7 +234,7 @@ export const CollaboratorHomeScreen: React.FC<CollaboratorHomeScreenProps> = ({
         {/* Action 2: Minha Caixa Postal */}
         <div
           onClick={onNavigateToInbox}
-          className="group relative rounded-3xl bg-white border border-emerald-200/90 p-6 sm:p-7 shadow-xl shadow-emerald-950/5 hover:border-[#00A868] hover:shadow-2xl hover:shadow-emerald-600/10 transition-all cursor-pointer flex flex-col justify-between space-y-6"
+          className="group relative rounded-3xl bg-white border border-emerald-200/90 p-6 shadow-xl shadow-emerald-950/5 hover:border-[#00A868] hover:shadow-2xl hover:shadow-emerald-600/10 transition-all cursor-pointer flex flex-col justify-between space-y-5"
         >
           <div className="space-y-3">
             <div className="relative w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-[#00A868] group-hover:scale-105 group-hover:bg-[#00A868] group-hover:text-white transition-all shadow-xs">
@@ -227,11 +246,9 @@ export const CollaboratorHomeScreen: React.FC<CollaboratorHomeScreenProps> = ({
               )}
             </div>
             <div>
-              <div className="flex items-center justify-between">
-                <h2 className="font-['Outfit',sans-serif] text-xl font-bold text-[#08301D] group-hover:text-[#008F58] transition-colors">
-                  Minha caixa postal
-                </h2>
-              </div>
+              <h2 className="font-['Outfit',sans-serif] text-xl font-bold text-[#08301D] group-hover:text-[#008F58] transition-colors">
+                Minha caixa postal
+              </h2>
               <p className="text-xs sm:text-sm text-emerald-800/80 pt-1 leading-relaxed">
                 Veja as mensagens que outras pessoas deixaram para você.
               </p>
@@ -240,9 +257,42 @@ export const CollaboratorHomeScreen: React.FC<CollaboratorHomeScreenProps> = ({
 
           <button
             type="button"
-            className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200 group-hover:bg-emerald-100 transition-all shadow-xs cursor-pointer"
+            className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200 group-hover:bg-emerald-100 transition-all shadow-xs cursor-pointer"
           >
-            <span>Ver mensagens recebidas</span>
+            <span>Ver recebidas</span>
+            <ArrowRight className="w-3.5 h-3.5 text-[#00A868]" />
+          </button>
+        </div>
+
+        {/* Action 3: Mensagens Enviadas (Histórico) */}
+        <div
+          onClick={onNavigateToSent}
+          className="group relative rounded-3xl bg-white border border-emerald-200/90 p-6 shadow-xl shadow-emerald-950/5 hover:border-[#00A868] hover:shadow-2xl hover:shadow-emerald-600/10 transition-all cursor-pointer flex flex-col justify-between space-y-5"
+        >
+          <div className="space-y-3">
+            <div className="relative w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-[#00A868] group-hover:scale-105 group-hover:bg-[#00A868] group-hover:text-white transition-all shadow-xs">
+              <Send className="w-6 h-6" />
+              {(safeSummary.sentMessages ?? 0) > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 text-[10px] font-extrabold flex items-center justify-center shadow-xs">
+                  {safeSummary.sentMessages}
+                </span>
+              )}
+            </div>
+            <div>
+              <h2 className="font-['Outfit',sans-serif] text-xl font-bold text-[#08301D] group-hover:text-[#008F58] transition-colors">
+                Mensagens enviadas
+              </h2>
+              <p className="text-xs sm:text-sm text-emerald-800/80 pt-1 leading-relaxed">
+                Acompanhe os recados enviados, reações e agradecimentos dos colegas.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200 group-hover:bg-emerald-100 transition-all shadow-xs cursor-pointer"
+          >
+            <span>Ver meu histórico</span>
             <ArrowRight className="w-3.5 h-3.5 text-[#00A868]" />
           </button>
         </div>

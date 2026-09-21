@@ -1,5 +1,5 @@
 import React from 'react';
-import { Mail, ShieldCheck, ArrowLeft, Inbox, User, LogOut, Settings } from 'lucide-react';
+import { Mail, ShieldCheck, ArrowLeft, Inbox, User, LogOut, Settings, Send } from 'lucide-react';
 import { CollaboratorProfile, isRHAdmin } from '../types';
 import { YellowRibbon } from './YellowRibbon';
 
@@ -11,6 +11,7 @@ interface HeaderProps {
   collaborator?: CollaboratorProfile | null;
   unreadInboxCount?: number;
   onNavigateToInbox?: () => void;
+  onNavigateToSent?: () => void;
   onOpenProfile?: () => void;
   onLogout?: () => void;
   onNavigateToLogin?: () => void;
@@ -24,6 +25,7 @@ export const Header: React.FC<HeaderProps> = ({
   collaborator,
   unreadInboxCount = 0,
   onNavigateToInbox,
+  onNavigateToSent,
   onOpenProfile,
   onLogout,
   onNavigateToLogin,
@@ -94,6 +96,23 @@ export const Header: React.FC<HeaderProps> = ({
                       {unreadInboxCount}
                     </span>
                   )}
+                </button>
+              )}
+
+              {/* Sent Messages Shortcut Button */}
+              {onNavigateToSent && (
+                <button
+                  id="btn-header-sent"
+                  onClick={onNavigateToSent}
+                  className={`relative inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    currentView === 'sent'
+                      ? 'bg-[#00A868] text-white shadow-xs'
+                      : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
+                  }`}
+                  title="Mensagens que você enviou"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Enviadas</span>
                 </button>
               )}
 

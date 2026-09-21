@@ -5,6 +5,7 @@ import { WelcomeScreen } from './components/WelcomeScreen';
 import { LoginScreen } from './components/LoginScreen';
 import { CollaboratorHomeScreen } from './components/CollaboratorHomeScreen';
 import { InboxScreen } from './components/InboxScreen';
+import { SentMessagesScreen } from './components/SentMessagesScreen';
 import { CollaboratorProfileModal } from './components/CollaboratorProfileModal';
 import { RecipientSelectScreen } from './components/RecipientSelectScreen';
 import { WriteMessageScreen } from './components/WriteMessageScreen';
@@ -15,7 +16,7 @@ import { PublicRecipient, CollaboratorProfile, CollaboratorSession } from './typ
 
 export default function App() {
   const [currentView, setCurrentView] = useState<
-    'welcome' | 'login' | 'collab-home' | 'inbox' | 'select-recipient' | 'write-message' | 'confirmation' | 'admin'
+    'welcome' | 'login' | 'collab-home' | 'inbox' | 'sent' | 'select-recipient' | 'write-message' | 'confirmation' | 'admin'
   >('welcome');
 
   // Collaborator auth & profile state
@@ -239,6 +240,16 @@ export default function App() {
     }
   };
 
+  const handleNavigateToSent = () => {
+    if (collaborator && collabToken) {
+      setCurrentView('sent');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      setCurrentView('login');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
   const handleSendReplyFromInbox = (recipientId: string) => {
     const found = recipients.find((r) => r.id === recipientId);
     if (found) {
@@ -285,6 +296,7 @@ export default function App() {
         collaborator={collaborator}
         unreadInboxCount={unreadInboxCount}
         onNavigateToInbox={handleNavigateToInbox}
+        onNavigateToSent={handleNavigateToSent}
         onOpenProfile={() => setIsProfileModalOpen(true)}
         onLogout={handleCollaboratorLogout}
         onNavigateToLogin={() => {
@@ -324,9 +336,10 @@ export default function App() {
             summary={{
               totalMessages: collaborator.received_count || 0,
               unreadMessages: unreadInboxCount ?? (collaborator.unread_count || 0),
-              latestMessageDate: null,
+              sentMessages: collaborator.sent_count || 0,
             }}
             onNavigateToInbox={handleNavigateToInbox}
+            onNavigateToSent={handleNavigateToSent}
             onStartSendMessage={handleStartMessage}
             onOpenProfile={() => setIsProfileModalOpen(true)}
             onLogout={handleCollaboratorLogout}
@@ -340,8 +353,21 @@ export default function App() {
             collaborator={collaborator}
             onBack={handleBackToHome}
             onBackToHome={handleBackToHome}
+            onNavigateToSent={handleNavigateToSent}
             onNavigateToSend={handleStartMessage}
             onSendReply={handleSendReplyFromInbox}
+          />
+        )}
+
+        {/* Collaborator Sent Messages (My Sent History) */}
+        {currentView === 'sent' && collaborator && collabToken && (
+          <SentMessagesScreen
+            token={collabToken}
+            collaborator={collaborator}
+            onBack={handleBackToHome}
+            onBackToHome={handleBackToHome}
+            onNavigateToInbox={handleNavigateToInbox}
+            onNavigateToSend={handleStartMessage}
           />
         )}
 
